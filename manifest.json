@@ -1,0 +1,18 @@
+{
+  "name": "誤出荷防止システム (出荷検品 MVP)",
+  "short_name": "誤出荷防止",
+  "description": "納品書、現品票、工程流動表のQRコードから品番を自動抽出し一致判定を行う誤出荷防止用の現場端末アプリ",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0d6efd",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

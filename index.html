@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#0d6efd">
+    <title>誤出荷防止システム (出荷検品 MVP)</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon.svg">
+    
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
+    <!-- Custom Style -->
+    <link href="css/style.css" rel="stylesheet">
+</head>
+<body>
+
+    <!-- Navigation Header -->
+    <nav class="navbar navbar-dark bg-primary shadow-sm">
+        <div class="container-fluid d-flex justify-content-between align-items-center">
+            <span class="navbar-brand mb-0 h1">
+                <i class="bi bi-shield-check me-2"></i>誤出荷防止システム <small class="fs-6 text-light opacity-75">MVP</small>
+            </span>
+            <div id="pwa-status" class="text-white fs-6">
+                <span class="badge bg-success" id="network-badge"><i class="bi bi-wifi"></i> オンライン</span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container py-3" style="max-width: 600px; padding-bottom: 80px !important;">
+
+        <!-- 1. Employee Section (社員証QR読取) -->
+        <div id="employee-section" class="card border border-danger mb-3 transition">
+            <div class="card-body py-3 d-flex align-items-center justify-content-between">
+                <div>
+                    <span class="text-muted d-block small"><i class="bi bi-person-fill"></i> 現在の作業員</span>
+                    <h5 class="mb-0 fw-bold text-dark" id="active-employee-id">未ログイン</h5>
+                </div>
+                <div>
+                    <button class="btn btn-danger btn-lg" id="btn-scan-employee">
+                        <i class="bi bi-qr-code-scan"></i> 社員証スキャン
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Scanner and Verification Panel (Visible only when logged in) -->
+        <div id="scanner-main-section" class="d-none animate-fade-in">
+
+            <!-- Instruction alert -->
+            <div class="alert alert-info py-2 px-3 mb-3" role="alert" style="font-size: 0.9em;">
+                <i class="bi bi-info-circle-fill me-1"></i>
+                納品書、現品票、工程流動表の3点を順にスキャンしてください。
+            </div>
+
+            <!-- OK/NG Judgement Banner -->
+            <div id="banner-ok" class="result-banner">
+                <i class="bi bi-check-circle-fill me-2 fs-1 d-block mb-1"></i>
+                出荷 OK
+                <span class="d-block fs-6 fw-normal mt-1 text-light opacity-90">品番が一致しました。出荷作業を継続してください。</span>
+            </div>
+
+            <div id="banner-ng" class="result-banner">
+                <i class="bi bi-exclamation-triangle-fill me-2 fs-1 d-block mb-1"></i>
+                品番不一致 (NG)
+                <span class="d-block fs-6 fw-normal mt-1 text-light opacity-90">ただちに作業を停止し、管理者に報告してください。</span>
+                <div id="ng-mismatch-details" class="mt-2 text-start p-2 bg-dark bg-opacity-25 rounded small font-monospace d-none"></div>
+            </div>
+
+            <!-- 2, 3, 4 Verification Slots -->
+            <div class="row g-3 mb-4">
+                
+                <!-- 2. Customer Delivery Note (客先納品書QR読取) -->
+                <div class="col-12">
+                    <div class="scan-slot active p-3" id="slot-delivery">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                                <span class="badge bg-secondary mb-1" id="del-status-badge">未読取</span>
+                                <h6 class="mb-0 fw-bold text-dark">1. 客先納品書 QR</h6>
+                            </div>
+                            <button class="btn btn-outline-primary btn-sm rounded-pill px-3" id="btn-slot-scan-delivery">
+                                <i class="bi bi-camera"></i> スキャン
+                            </button>
+                        </div>
+                        
+                        <!-- Parsed Field Box -->
+                        <div id="parsed-del-info" class="p-2 bg-light border rounded mt-2 d-none" style="font-size: 0.85em;">
+                            <div class="row g-1">
+                                <div class="col-7">
+                                    <span class="parsed-field-label">品番 (127-136):</span><br>
+                                    <span class="parsed-val" id="parsed-del-part">-</span>
+                                </div>
+                                <div class="col-5">
+                                    <span class="parsed-field-label">次区 (156-159):</span><br>
+                                    <span class="parsed-val" id="parsed-del-next">-</span>
+                                </div>
+                                <div class="col-6 mt-1">
+                                    <span class="parsed-field-label">納期 (180-187):</span><br>
+                                    <span class="parsed-val" id="parsed-del-date">-</span>
+                                </div>
+                                <div class="col-6 mt-1">
+                                    <span class="parsed-field-label">数量 (192-197):</span><br>
+                                    <span class="parsed-val" id="parsed-del-qty">-</span>
+                                </div>
+                                <div class="col-12 mt-1">
+                                    <span class="parsed-field-label">注文番号 (204-212):</span><br>
+                                    <span class="parsed-val" id="parsed-del-order">-</span>
+                                </div>
+                                <div class="col-12 mt-1 text-end">
+                                    <small class="text-muted">データ長: <span id="parsed-del-length">-</span></small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Item Tag (現品票QR読取) -->
+                <div class="col-12 col-md-6">
+                    <div class="scan-slot active p-3 h-100" id="slot-item">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                                <span class="badge bg-secondary mb-1" id="item-status-badge">未読取</span>
+                                <h6 class="mb-0 fw-bold text-dark">2. 現品票 QR</h6>
+                            </div>
+                            <button class="btn btn-outline-primary btn-sm rounded-pill px-3" id="btn-slot-scan-item">
+                                <i class="bi bi-camera"></i> スキャン
+                            </button>
+                        </div>
+                        
+                        <!-- Parsed Field Box -->
+                        <div id="parsed-item-info" class="p-2 bg-light border rounded mt-2 d-none" style="font-size: 0.85em;">
+                            <span class="parsed-field-label">品番 (先頭10桁):</span><br>
+                            <span class="parsed-val fs-6" id="parsed-item-part">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. Process Routing Sheet (工程流動表QR読取) -->
+                <div class="col-12 col-md-6">
+                    <div class="scan-slot active p-3 h-100" id="slot-process">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                                <span class="badge bg-secondary mb-1" id="proc-status-badge">未読取</span>
+                                <h6 class="mb-0 fw-bold text-dark">3. 工程流動表 QR</h6>
+                            </div>
+                            <button class="btn btn-outline-primary btn-sm rounded-pill px-3" id="btn-slot-scan-process">
+                                <i class="bi bi-camera"></i> スキャン
+                            </button>
+                        </div>
+                        
+                        <!-- Parsed Field Box -->
+                        <div id="parsed-proc-info" class="p-2 bg-light border rounded mt-2 d-none" style="font-size: 0.85em;">
+                            <span class="parsed-field-label">品番 (先頭10桁):</span><br>
+                            <span class="parsed-val fs-6 d-block mb-1" id="parsed-proc-part">-</span>
+                            <span class="parsed-field-label">ロット番号 (11桁目以降):</span><br>
+                            <span class="parsed-val font-monospace" id="parsed-proc-lot">-</span>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Operational Control Actions -->
+            <div class="d-grid gap-2 mb-4">
+                <button class="btn btn-warning btn-lg fw-bold" id="btn-reset">
+                    <i class="bi bi-arrow-counterclockwise"></i> 入力内容をリセット
+                </button>
+            </div>
+
+        </div>
+
+        <!-- 8. History Log Panel (LocalStorage) -->
+        <div class="card mb-4 shadow-sm">
+            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                <span class="fw-bold"><i class="bi bi-clock-history me-1"></i> 検品履歴一覧</span>
+                <div>
+                    <button class="btn btn-sm btn-outline-light me-1" id="btn-export-csv" title="CSVエクスポート">
+                        <i class="bi bi-download"></i> CSV
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" id="btn-clear-history" title="履歴クリア">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body p-2" id="history-list" style="max-height: 400px; overflow-y: auto;">
+                <div class="text-muted text-center py-4">履歴データはありません。</div>
+            </div>
+        </div>
+
+        <!-- Collapsible Developer / Testing Utilities (Must have for desktop / test environments) -->
+        <div class="accordion mb-4 shadow-sm" id="testAccordion">
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed fw-bold text-secondary bg-light" type="button" data-bs-toggle="collapse" data-bs-target="#collapseTest" aria-expanded="false" aria-controls="collapseTest">
+                        <i class="bi bi-bug me-1"></i> デモ・動作確認用パネル (テスト用)
+                    </button>
+                </h2>
+                <div id="collapseTest" class="accordion-collapse collapse" data-bs-parent="#testAccordion">
+                    <div class="accordion-body bg-light">
+                        <div class="alert alert-warning py-1 px-2 small mb-3">
+                            実物のQRコードが手元になくても、以下のワンクリックテストや直接入力によりMVP全体の動作確認(判定、音、背景変化、履歴保存)が可能です。
+                        </div>
+                        
+                        <!-- Ready-made Preset Buttons -->
+                        <h6 class="fw-bold text-dark small">ワンクリック動作テスト:</h6>
+                        <div class="d-flex flex-wrap gap-2 mb-3">
+                            <button class="btn btn-success btn-sm flex-grow-1" id="btn-demo-load-ok">
+                                <i class="bi bi-check-circle"></i> OKパターンを読込
+                            </button>
+                            <button class="btn btn-danger btn-sm flex-grow-1" id="btn-demo-load-ng-part">
+                                <i class="bi bi-x-circle"></i> NG (現品票品番エラー)
+                            </button>
+                            <button class="btn btn-danger btn-sm flex-grow-1" id="btn-demo-load-ng-proc">
+                                <i class="bi bi-x-circle"></i> NG (工程表品番エラー)
+                            </button>
+                        </div>
+
+                        <!-- Manual Override Forms -->
+                        <h6 class="fw-bold text-dark small border-top pt-2">各スキャン値の直接入力(シミュレーション):</h6>
+                        
+                        <div class="mb-2">
+                            <label class="form-label mb-0 small text-secondary">社員証コード</label>
+                            <div class="input-group input-group-sm">
+                                <input type="text" class="form-control font-monospace" id="demo-employee-id" placeholder="EMP-001">
+                                <button class="btn btn-outline-secondary" type="button" id="btn-demo-emp-set">設定</button>
+                            </div>
+                        </div>
+
+                        <div class="mb-2">
+                            <label class="form-label mb-0 small text-secondary">客先納品書QR生データ (212文字以上の固定長を想定)</label>
+                            <div class="input-group input-group-sm">
+                                <textarea class="form-control font-monospace" id="demo-delivery-raw" rows="3" placeholder="127文字目から品番、156文字目から次区..."></textarea>
+                                <button class="btn btn-outline-secondary" type="button" id="btn-demo-del-set">設定</button>
+                            </div>
+                            <small class="text-muted d-block" style="font-size:0.75em;">
+                                ※品番(127-136), 次区(156-159), 納期(180-187), 数量(192-197), 注文番号(204-212)
+                            </small>
+                        </div>
+
+                        <div class="mb-2">
+                            <label class="form-label mb-0 small text-secondary">現品票QR生データ (10桁を品番として取得)</label>
+                            <div class="input-group input-group-sm">
+                                <input type="text" class="form-control font-monospace" id="demo-item-raw" placeholder="10桁以上の品番データ">
+                                <button class="btn btn-outline-secondary" type="button" id="btn-demo-item-set">設定</button>
+                            </div>
+                        </div>
+
+                        <div class="mb-1">
+                            <label class="form-label mb-0 small text-secondary">工程流動表QR生データ (先頭10桁:品番 / 残り:ロット)</label>
+                            <div class="input-group input-group-sm">
+                                <input type="text" class="form-control font-monospace" id="demo-process-raw" placeholder="10桁品番 + ロット番号">
+                                <button class="btn btn-outline-secondary" type="button" id="btn-demo-proc-set">設定</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Scanner Camera Modal Dialog -->
+    <div class="modal fade" id="scannerModal" tabindex="-1" aria-labelledby="scannerModalLabel" aria-hidden="true" data-bs-backdrop="static">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-bold" id="scannerModalLabel">QRコードスキャン</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body text-center p-3 bg-light">
+                    
+                    <!-- Scanner Container -->
+                    <div id="scanner-container" class="shadow">
+                        <video id="scanner-video"></video>
+                        <div class="scanner-overlay">
+                            <div class="scanner-viewfinder"></div>
+                        </div>
+                    </div>
+
+                    <div id="scanner-loading" class="mt-3 text-secondary">
+                        <div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div>
+                        <span>カメラを起動しています...</span>
+                    </div>
+
+                    <div class="mt-3 small text-muted">
+                        QRコードを枠内に合わせると自動で読み取ります。
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary w-100 py-2" data-bs-dismiss="modal">キャンセル</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- jsQR Library from JSDelivr CDN (Offline caching will be handled by Service Worker) -->
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    
+    <!-- Bootstrap 5 JS Bundle with Popper -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- App Core Script -->
+    <script src="js/app.js"></script>
+
+    <!-- PWA Registration & Network Status Monitor -->
+    <script>
+        // Check online/offline status
+        function updateNetworkStatus() {
+            const badge = document.getElementById('network-badge');
+            if (navigator.onLine) {
+                badge.className = 'badge bg-success';
+                badge.innerHTML = '<i class="bi bi-wifi"></i> オンライン';
+            } else {
+                badge.className = 'badge bg-warning text-dark';
+                badge.innerHTML = '<i class="bi bi-wifi-off"></i> オフラインモード';
+            }
+        }
+        window.addEventListener('online', updateNetworkStatus);
+        window.addEventListener('offline', updateNetworkStatus);
+        updateNetworkStatus();
+
+        // Register Service Worker
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .then(reg => {
+                        console.log('ServiceWorker registration successful with scope: ', reg.scope);
+                    })
+                    .catch(err => {
+                        console.error('ServiceWorker registration failed: ', err);
+                    });
+            });
+        }
+    </script>
+</body>
+</html>
