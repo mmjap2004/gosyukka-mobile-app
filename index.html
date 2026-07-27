@@ -46,13 +46,20 @@
             </div>
         </div>
 
-        <!-- Main Scanner and Verification Panel (Visible only when logged in) -->
+                <!-- Main Scanner and Verification Panel (Visible only when logged in) -->
         <div id="scanner-main-section" class="d-none animate-fade-in">
+
+            <!-- Continuous Scan Button (Primary Action) -->
+            <div class="d-grid gap-2 mb-3">
+                <button class="btn btn-primary btn-lg fw-bold py-3 shadow" id="btn-continuous-scan">
+                    <i class="bi bi-magic me-2"></i> 連続スキャンを開始
+                </button>
+            </div>
 
             <!-- Instruction alert -->
             <div class="alert alert-info py-2 px-3 mb-3" role="alert" style="font-size: 0.9em;">
                 <i class="bi bi-info-circle-fill me-1"></i>
-                納品書、現品票、工程流動表の3点を順にスキャンしてください。
+                納品書、現品票、工程表の順に次々スキャンできます。
             </div>
 
             <!-- OK/NG Judgement Banner -->
@@ -269,8 +276,13 @@
                     <h5 class="modal-title fw-bold" id="scannerModalLabel">QRコードスキャン</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
-                <div class="modal-body text-center p-3 bg-light">
+                                <div class="modal-body text-center p-3 bg-light">
                     
+                    <!-- Continuous Scan Guide -->
+                    <div id="scanner-guide" class="alert alert-primary fw-bold mb-2 d-none">
+                        <span id="scanner-guide-text">1. 納品書をスキャン</span>
+                    </div>
+
                     <!-- Scanner Container -->
                     <div id="scanner-container" class="shadow">
                         <video id="scanner-video"></video>

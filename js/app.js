@@ -6,15 +6,21 @@
 // Application State
 const state = {
     employeeId: null,
-    currentScanType: null, // 'employee', 'delivery', 'item', 'process'
+    currentScanType: null, // 'employee', 'delivery', 'item', 'process', 'continuous'
+    continuousMode: {
+        active: false,
+        step: 0, // 0: delivery, 1: item, 2: process
+        steps: ['delivery', 'item', 'process']
+    },
     scans: {
         delivery: { raw: '', parsed: null },
         item: { raw: '', parsed: null },
         process: { raw: '', parsed: null }
     },
-    history: [],
     videoStream: null,
-    scanIntervalId: null
+    scanIntervalId: null,
+    lastScannedData: '',
+    lastScannedTime: 0
 };
 
 // Audio context for dynamic sounds (Web Audio API)
@@ -213,100 +219,106 @@ function parseProcessRoutingQR(rawStr) {
 // Execute scanning of the camera stream using jsQR
 function startCamera(scanType) {
     state.currentScanType = scanType;
-    initAudio(); // Initialize audio context on user interaction
+    state.continuousMode.active = (scanType === 'continuous');
+    state.continuousMode.step = 0;
+    state.lastScannedData = '';
+    state.lastScannedTime = 0;
+    
+    initAudio(); 
     
     const scannerModal = new bootstrap.Modal(document.getElementById('scannerModal'));
     const modalTitle = document.getElementById('scannerModalLabel');
+    const guide = document.getElementById('scanner-guide');
+    const guideText = document.getElementById('scanner-guide-text');
     
-    const titles = {
-        employee: '社員証 QRコード読取',
-        delivery: '客先納品書 QRコード読取',
-        item: '現品票 QRコード読取',
-        process: '工程流動表 QRコード読取'
-    };
-    modalTitle.textContent = titles[scanType] || 'QRコードスキャン';
+    if (state.continuousMode.active) {
+        modalTitle.textContent = '連続スキャンモード';
+        guide.classList.remove('d-none');
+        updateGuideText();
+    } else {
+        const titles = {
+            employee: '社員証 QRコード読取',
+            delivery: '客先納品書 QRコード読取',
+            item: '現品票 QRコード読取',
+            process: '工程流動表 QRコード読取'
+        };
+        modalTitle.textContent = titles[scanType] || 'QRコードスキャン';
+        guide.classList.add('d-none');
+    }
     
-    // Show modal and start stream
     scannerModal.show();
     
     const video = document.getElementById('scanner-video');
     const loadingText = document.getElementById('scanner-loading');
-    
     loadingText.classList.remove('d-none');
     
-    // Access user camera
     navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
     })
     .then(stream => {
         state.videoStream = stream;
         video.srcObject = stream;
-        video.setAttribute('playsinline', true); // Required for iOS
+        video.setAttribute('playsinline', true);
         video.play();
-        
         loadingText.classList.add('d-none');
-        
-        // Start processing frames
         startScanLoop(video);
     })
     .catch(err => {
         console.error('Camera access error:', err);
-        loadingText.innerHTML = `<span class="text-danger">カメラの起動に失敗しました。<br>権限を確認してください。</span>`;
+        loadingText.innerHTML = `<span class="text-danger">カメラの起動に失敗しました。</span>`;
     });
 }
 
-function stopCamera() {
-    if (state.scanIntervalId) {
-        clearInterval(state.scanIntervalId);
-        state.scanIntervalId = null;
+function updateGuideText() {
+    const guideText = document.getElementById('scanner-guide-text');
+    const stepLabels = ['1. 納品書をスキャン', '2. 現品票をスキャン', '3. 工程表をスキャン'];
+    if (guideText) {
+        guideText.textContent = stepLabels[state.continuousMode.step];
     }
-    if (state.videoStream) {
-        state.videoStream.getTracks().forEach(track => track.stop());
-        state.videoStream = null;
-    }
-    const video = document.getElementById('scanner-video');
-    if (video) video.srcObject = null;
-}
-
-function startScanLoop(video) {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    
-    state.scanIntervalId = setInterval(() => {
-        if (video.readyState === video.HAVE_ENOUGH_DATA) {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            // jsQR is a global library loaded from CDN/local
-            if (typeof jsQR !== 'undefined') {
-                const code = jsQR(imageData.data, imageData.width, imageData.height, {
-                    inversionAttempts: 'dontInvert',
-                });
-                
-                if (code && code.data) {
-                    // Successfully scanned a code!
-                    handleScannedCode(code.data);
-                }
-            }
-        }
-    }, 200); // Check 5 times per second
 }
 
 function handleScannedCode(rawData) {
-    // Sound feedback
+    const now = Date.now();
+    // Prevent duplicate scans within 1.5 seconds
+    if (rawData === state.lastScannedData && (now - state.lastScannedTime < 1500)) {
+        return;
+    }
+    
+    state.lastScannedData = rawData;
+    state.lastScannedTime = now;
+    
     playSound('scan');
-    
-    // Stop scanning
-    stopCamera();
-    
-    // Close modal
-    const modalEl = document.getElementById('scannerModal');
-    const modal = bootstrap.Modal.getInstance(modalEl);
-    if (modal) modal.hide();
-    
-    processCodeData(state.currentScanType, rawData);
+
+    if (state.continuousMode.active) {
+        const currentType = state.continuousMode.steps[state.continuousMode.step];
+        processCodeData(currentType, rawData);
+        
+        state.continuousMode.step++;
+        
+        if (state.continuousMode.step >= state.continuousMode.steps.length) {
+            // All steps complete
+            setTimeout(() => {
+                stopCamera();
+                const modalEl = document.getElementById('scannerModal');
+                const modal = bootstrap.Modal.getInstance(modalEl);
+                if (modal) modal.hide();
+            }, 500);
+        } else {
+            // Move to next step
+            updateGuideText();
+            // Visual feedback on guide
+            const guide = document.getElementById('scanner-guide');
+            guide.classList.replace('alert-primary', 'alert-success');
+            setTimeout(() => guide.classList.replace('alert-success', 'alert-primary'), 400);
+        }
+    } else {
+        // Single scan mode
+        stopCamera();
+        const modalEl = document.getElementById('scannerModal');
+        const modal = bootstrap.Modal.getInstance(modalEl);
+        if (modal) modal.hide();
+        processCodeData(state.currentScanType, rawData);
+    }
 }
 
 // Process the scanned string based on target slot
@@ -672,7 +684,10 @@ document.addEventListener('DOMContentLoaded', () => {
     setupDemoPresets();
     
         // Camera trigger events
-    const scanEmployeeBtn = document.getElementById('btn-scan-employee');
+        const scanContinuousBtn = document.getElementById('btn-continuous-scan');
+        if (scanContinuousBtn) scanContinuousBtn.addEventListener('click', () => startCamera('continuous'));
+
+        const scanEmployeeBtn = document.getElementById('btn-scan-employee');
     if (scanEmployeeBtn) scanEmployeeBtn.addEventListener('click', () => startCamera('employee'));
     
     const scanDelBtn = document.getElementById('btn-slot-scan-delivery');
