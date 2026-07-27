@@ -671,16 +671,18 @@ document.addEventListener('DOMContentLoaded', () => {
     loadHistory();
     setupDemoPresets();
     
-    // Camera trigger events
-    document.getElementById('btn-scan-employee').addEventListener('click', () => startCamera('employee'));
-    document.getElementById('btn-scan-delivery').addEventListener('click', () => startCamera('delivery'));
-    document.getElementById('btn-scan-item').addEventListener('click', () => startCamera('item'));
-    document.getElementById('btn-scan-process').addEventListener('click', () => startCamera('process'));
+        // Camera trigger events
+    const scanEmployeeBtn = document.getElementById('btn-scan-employee');
+    if (scanEmployeeBtn) scanEmployeeBtn.addEventListener('click', () => startCamera('employee'));
     
-    // Quick scan buttons within slots
-    document.getElementById('btn-slot-scan-delivery').addEventListener('click', () => startCamera('delivery'));
-    document.getElementById('btn-slot-scan-item').addEventListener('click', () => startCamera('item'));
-    document.getElementById('btn-slot-scan-process').addEventListener('click', () => startCamera('process'));
+    const scanDelBtn = document.getElementById('btn-slot-scan-delivery');
+    if (scanDelBtn) scanDelBtn.addEventListener('click', () => startCamera('delivery'));
+    
+    const scanItemBtn = document.getElementById('btn-slot-scan-item');
+    if (scanItemBtn) scanItemBtn.addEventListener('click', () => startCamera('item'));
+    
+    const scanProcBtn = document.getElementById('btn-slot-scan-process');
+    if (scanProcBtn) scanProcBtn.addEventListener('click', () => startCamera('process'));
     
     // Utilities
     document.getElementById('btn-reset').addEventListener('click', resetCurrentScans);
