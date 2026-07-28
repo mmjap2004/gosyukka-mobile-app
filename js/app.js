@@ -556,6 +556,7 @@ function processCodeData(type, rawData) {
 function updateEmployeeUI() {
     const section = document.getElementById('employee-section');
     const scannerSection = document.getElementById('scanner-main-section');
+    const thumbBar = document.getElementById('thumb-scan-bar');
     const idDisplay = document.getElementById('active-employee-id');
     const inputField = document.getElementById('demo-employee-id');
     
@@ -564,12 +565,14 @@ function updateEmployeeUI() {
         section.classList.remove('border-danger');
         section.classList.add('border-success', 'bg-light');
         scannerSection.classList.remove('d-none');
+        if (thumbBar) thumbBar.classList.remove('d-none');
         inputField.value = state.employeeId;
     } else {
         idDisplay.textContent = '未ログイン';
         section.classList.remove('border-success', 'bg-light');
         section.classList.add('border-danger');
         scannerSection.classList.add('d-none');
+        if (thumbBar) thumbBar.classList.add('d-none');
     }
 }
 
@@ -886,17 +889,54 @@ function setupDemoPresets() {
     });
 }
 
+// Manual screen tap scan shutter trigger
+function triggerManualTouchScan() {
+    const video = document.getElementById('scanner-video');
+    if (!video || video.readyState !== video.HAVE_ENOUGH_DATA) return;
+    
+    // Provide visual pulse feedback on screen tap
+    const container = document.getElementById('scanner-container');
+    if (container) {
+        container.style.boxShadow = '0 0 25px #198754';
+        setTimeout(() => { container.style.boxShadow = ''; }, 300);
+    }
+    
+    if (typeof jsQR !== 'undefined' && state.videoStream) {
+        const vWidth = video.videoWidth;
+        const vHeight = video.videoHeight;
+        if (!scanCanvas) {
+            scanCanvas = document.createElement('canvas');
+            scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
+        }
+        scanCanvas.width = vWidth;
+        scanCanvas.height = vHeight;
+        scanCtx.drawImage(video, 0, 0, vWidth, vHeight);
+        const fullData = scanCtx.getImageData(0, 0, vWidth, vHeight);
+        
+        let code = jsQR(fullData.data, fullData.width, fullData.height, { inversionAttempts: "attemptBoth" });
+        if (!code) {
+            const filteredData = applyInkjetFilter(fullData);
+            code = jsQR(filteredData.data, filteredData.width, filteredData.height, { inversionAttempts: "attemptBoth" });
+        }
+        if (code && code.data && code.data.trim().length > 0) {
+            handleScannedCode(code.data);
+        } else {
+            playSound('scan');
+        }
+    }
+}
+
 // Document Event Listeners
 document.addEventListener('DOMContentLoaded', () => {
     // History initialization
     loadHistory();
     setupDemoPresets();
     
-        // Camera trigger events
-        const scanContinuousBtn = document.getElementById('btn-continuous-scan');
-        if (scanContinuousBtn) scanContinuousBtn.addEventListener('click', () => startCamera('continuous'));
+    // Camera trigger events
+    const scanContinuousBtn = document.getElementById('btn-continuous-scan');
+    if (scanContinuousBtn) scanContinuousBtn.addEventListener('click', () => startCamera('continuous'));
 
-        const scanEmployeeBtn = document.getElementById('btn-scan-employee');
+    const scanEmployeeBtn = document.getElementById('btn-scan-employee');
     if (scanEmployeeBtn) scanEmployeeBtn.addEventListener('click', () => startCamera('employee'));
     
     const scanDelBtn = document.getElementById('btn-slot-scan-delivery');
@@ -907,6 +947,26 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const scanProcBtn = document.getElementById('btn-slot-scan-process');
     if (scanProcBtn) scanProcBtn.addEventListener('click', () => startCamera('process'));
+    
+    // Sticky Left-Thumb Scan Dock Action Buttons
+    const thumbDel = document.getElementById('btn-thumb-delivery');
+    if (thumbDel) thumbDel.addEventListener('click', () => startCamera('delivery'));
+    
+    const thumbItem = document.getElementById('btn-thumb-item');
+    if (thumbItem) thumbItem.addEventListener('click', () => startCamera('item'));
+    
+    const thumbProc = document.getElementById('btn-thumb-process');
+    if (thumbProc) thumbProc.addEventListener('click', () => startCamera('process'));
+    
+    const thumbCont = document.getElementById('btn-thumb-continuous');
+    if (thumbCont) thumbCont.addEventListener('click', () => startCamera('continuous'));
+
+    // Camera modal touch shutter triggers
+    const tapTriggerBtn = document.getElementById('btn-camera-tap-trigger');
+    if (tapTriggerBtn) tapTriggerBtn.addEventListener('click', triggerManualTouchScan);
+    
+    const scannerContainer = document.getElementById('scanner-container');
+    if (scannerContainer) scannerContainer.addEventListener('click', triggerManualTouchScan);
     
     // Utilities
     document.getElementById('btn-reset').addEventListener('click', resetCurrentScans);
@@ -925,6 +985,10 @@ document.addEventListener('DOMContentLoaded', () => {
         torchBtn.addEventListener('click', toggleTorch);
     }
     
+    // Stop camera when scanner modal is dismissed
+    const modalEl = document.getElementById('scannerModal');
+    if (modalEl) modalEl.addEventListener('hidden.bs.modal', stopCamera);
+
     // Log initial UI
     updateEmployeeUI();
     updateVerificationUI();
