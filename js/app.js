@@ -216,36 +216,96 @@ function parseProcessRoutingQR(rawStr) {
     };
 }
 
-// Camera scanning animation frame and canvas variables
+// Camera scanning animation frame, zoom and filter variables
 let animFrameId = null;
 let scanCanvas = null;
 let scanCtx = null;
+let cropCanvas = null;
+let cropCtx = null;
+let currentZoomFactor = 1.0;
+let isTorchOn = false;
 
-// Real-time jsQR video frame decoding loop
+// Fast Binarization / Contrast Filter for Inkjet Ink Bleed and Low Contrast QR codes
+function applyInkjetFilter(imageData) {
+    const data = imageData.data;
+    const len = data.length;
+    let total = 0;
+    
+    // Sample pixels to compute average luminance quickly
+    for (let i = 0; i < len; i += 16) {
+        total += (data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114);
+    }
+    const avg = total / (len / 16);
+    const threshold = Math.max(40, Math.min(200, avg * 0.92));
+    
+    for (let i = 0; i < len; i += 4) {
+        const lum = data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114;
+        const v = lum < threshold ? 0 : 255;
+        data[i] = v;
+        data[i+1] = v;
+        data[i+2] = v;
+    }
+    return imageData;
+}
+
+// Real-time multi-stage jsQR decoding loop (Center Crop + Inkjet Enhancement)
 function startScanLoop(video) {
     if (!scanCanvas) {
         scanCanvas = document.createElement('canvas');
         scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
     }
+    if (!cropCanvas) {
+        cropCanvas = document.createElement('canvas');
+        cropCtx = cropCanvas.getContext('2d', { willReadFrequently: true });
+    }
 
     function tick() {
         if (video && video.readyState === video.HAVE_ENOUGH_DATA) {
-            scanCanvas.width = video.videoWidth;
-            scanCanvas.height = video.videoHeight;
-            scanCtx.drawImage(video, 0, 0, scanCanvas.width, scanCanvas.height);
-            
-            const imageData = scanCtx.getImageData(0, 0, scanCanvas.width, scanCanvas.height);
+            const vWidth = video.videoWidth;
+            const vHeight = video.videoHeight;
+
+            // 1. Center Viewfinder Cropping (Focuses resolution density on QR code area)
+            const cropRatio = 0.65 / currentZoomFactor;
+            const cropWidth = Math.floor(vWidth * cropRatio);
+            const cropHeight = Math.floor(vHeight * cropRatio);
+            const cropX = Math.floor((vWidth - cropWidth) / 2);
+            const cropY = Math.floor((vHeight - cropHeight) / 2);
+
+            cropCanvas.width = cropWidth;
+            cropCanvas.height = cropHeight;
+            cropCtx.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+
+            const croppedData = cropCtx.getImageData(0, 0, cropWidth, cropHeight);
             
             if (typeof jsQR !== 'undefined') {
-                const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                // Pass 1: Raw Center Crop
+                let code = jsQR(croppedData.data, croppedData.width, croppedData.height, {
                     inversionAttempts: "attemptBoth",
                 });
+                
+                // Pass 2: Inkjet Ink Bleed Filtered Center Crop (if Pass 1 fails & toggle enabled)
+                const isInkjetFilterOn = document.getElementById('toggle-inkjet-filter')?.checked ?? true;
+                if (!code && isInkjetFilterOn) {
+                    const filteredData = applyInkjetFilter(croppedData);
+                    code = jsQR(filteredData.data, filteredData.width, filteredData.height, {
+                        inversionAttempts: "attemptBoth",
+                    });
+                }
+
+                // Pass 3: Full Frame Fallback
+                if (!code) {
+                    scanCanvas.width = vWidth;
+                    scanCanvas.height = vHeight;
+                    scanCtx.drawImage(video, 0, 0, vWidth, vHeight);
+                    const fullData = scanCtx.getImageData(0, 0, vWidth, vHeight);
+                    code = jsQR(fullData.data, fullData.width, fullData.height, {
+                        inversionAttempts: "attemptBoth",
+                    });
+                }
                 
                 if (code && code.data && code.data.trim().length > 0) {
                     handleScannedCode(code.data);
                 }
-            } else {
-                console.error("jsQR library is not loaded.");
             }
         }
         
@@ -255,6 +315,58 @@ function startScanLoop(video) {
     }
 
     animFrameId = requestAnimationFrame(tick);
+}
+
+// Hardware or Software Zoom apply
+async function applyZoom(factor) {
+    currentZoomFactor = parseFloat(factor) || 1.0;
+    
+    // Update UI active buttons
+    document.querySelectorAll('#zoom-btn-group button').forEach(btn => {
+        if (parseFloat(btn.dataset.zoom) === currentZoomFactor) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+
+    // Try hardware camera track zoom if supported
+    if (state.videoStream) {
+        const track = state.videoStream.getVideoTracks()[0];
+        if (track && typeof track.getCapabilities === 'function') {
+            const capabilities = track.getCapabilities();
+            if (capabilities.zoom) {
+                const targetZoom = Math.min(capabilities.zoom.max, Math.max(capabilities.zoom.min, currentZoomFactor));
+                try {
+                    await track.applyConstraints({ advanced: [{ zoom: targetZoom }] });
+                } catch (e) {
+                    console.warn('Hardware zoom failed, using software crop zoom:', e);
+                }
+            }
+        }
+    }
+}
+
+// Hardware Torch (Flashlight) apply
+async function toggleTorch() {
+    if (!state.videoStream) return;
+    const track = state.videoStream.getVideoTracks()[0];
+    if (track && typeof track.getCapabilities === 'function') {
+        const capabilities = track.getCapabilities();
+        if (capabilities.torch) {
+            isTorchOn = !isTorchOn;
+            try {
+                await track.applyConstraints({ advanced: [{ torch: isTorchOn }] });
+                const btn = document.getElementById('btn-toggle-torch');
+                if (btn) {
+                    btn.classList.toggle('btn-warning', isTorchOn);
+                    btn.classList.toggle('btn-outline-warning', !isTorchOn);
+                }
+            } catch (e) {
+                console.warn('Torch apply failed:', e);
+            }
+        }
+    }
 }
 
 // Stop camera stream & release resources
@@ -267,6 +379,7 @@ function stopCamera() {
         state.videoStream.getTracks().forEach(track => track.stop());
         state.videoStream = null;
     }
+    isTorchOn = false;
     const video = document.getElementById('scanner-video');
     if (video) {
         video.srcObject = null;
@@ -317,7 +430,9 @@ async function startCamera(scanType) {
     // Stop any previously running camera stream
     stopCamera();
 
+    // High resolution constraints for dense QR codes
     const cameraConstraints = [
+        { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } },
         { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } },
         { video: { facingMode: 'environment' } },
         { video: true }
@@ -331,7 +446,25 @@ async function startCamera(scanType) {
             video.srcObject = stream;
             video.setAttribute('playsinline', true);
             await video.play();
+            
+            // Check torch support
+            const track = stream.getVideoTracks()[0];
+            const torchBtn = document.getElementById('btn-toggle-torch');
+            if (track && typeof track.getCapabilities === 'function' && track.getCapabilities().torch) {
+                if (torchBtn) torchBtn.classList.remove('d-none');
+            } else {
+                if (torchBtn) torchBtn.classList.add('d-none');
+            }
+
             loadingText.classList.add('d-none');
+            
+            // Default to 1.5x zoom for high-density delivery notes automatically!
+            if (scanType === 'delivery' || scanType === 'continuous') {
+                applyZoom(1.5);
+            } else {
+                applyZoom(1.0);
+            }
+
             startScanLoop(video);
             streamSuccess = true;
             break;
@@ -780,9 +913,17 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btn-export-csv').addEventListener('click', exportHistoryToCSV);
     document.getElementById('btn-clear-history').addEventListener('click', clearHistory);
     
-    // Stop camera when scanner modal is dismissed
-    const modalEl = document.getElementById('scannerModal');
-    modalEl.addEventListener('hidden.bs.modal', stopCamera);
+    // Zoom and Torch button controls
+    document.querySelectorAll('#zoom-btn-group button').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            applyZoom(e.target.dataset.zoom);
+        });
+    });
+
+    const torchBtn = document.getElementById('btn-toggle-torch');
+    if (torchBtn) {
+        torchBtn.addEventListener('click', toggleTorch);
+    }
     
     // Log initial UI
     updateEmployeeUI();

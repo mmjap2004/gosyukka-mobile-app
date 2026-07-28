@@ -1,4 +1,4 @@
-const CACHE_NAME = 'shipment-prevent-v4';
+const CACHE_NAME = 'shipment-prevent-v5';
 
 // Assets to precache on install
 const PRECACHE_ASSETS = [
