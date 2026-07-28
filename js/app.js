@@ -216,8 +216,65 @@ function parseProcessRoutingQR(rawStr) {
     };
 }
 
+// Camera scanning animation frame and canvas variables
+let animFrameId = null;
+let scanCanvas = null;
+let scanCtx = null;
+
+// Real-time jsQR video frame decoding loop
+function startScanLoop(video) {
+    if (!scanCanvas) {
+        scanCanvas = document.createElement('canvas');
+        scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
+    }
+
+    function tick() {
+        if (video && video.readyState === video.HAVE_ENOUGH_DATA) {
+            scanCanvas.width = video.videoWidth;
+            scanCanvas.height = video.videoHeight;
+            scanCtx.drawImage(video, 0, 0, scanCanvas.width, scanCanvas.height);
+            
+            const imageData = scanCtx.getImageData(0, 0, scanCanvas.width, scanCanvas.height);
+            
+            if (typeof jsQR !== 'undefined') {
+                const code = jsQR(imageData.data, imageData.width, imageData.height, {
+                    inversionAttempts: "attemptBoth",
+                });
+                
+                if (code && code.data && code.data.trim().length > 0) {
+                    handleScannedCode(code.data);
+                }
+            } else {
+                console.error("jsQR library is not loaded.");
+            }
+        }
+        
+        if (state.videoStream) {
+            animFrameId = requestAnimationFrame(tick);
+        }
+    }
+
+    animFrameId = requestAnimationFrame(tick);
+}
+
+// Stop camera stream & release resources
+function stopCamera() {
+    if (animFrameId) {
+        cancelAnimationFrame(animFrameId);
+        animFrameId = null;
+    }
+    if (state.videoStream) {
+        state.videoStream.getTracks().forEach(track => track.stop());
+        state.videoStream = null;
+    }
+    const video = document.getElementById('scanner-video');
+    if (video) {
+        video.srcObject = null;
+    }
+}
+
 // Execute scanning of the camera stream using jsQR
-function startCamera(scanType) {
+async function startCamera(scanType) {
     state.currentScanType = scanType;
     state.continuousMode.active = (scanType === 'continuous');
     state.continuousMode.step = 0;
@@ -226,10 +283,14 @@ function startCamera(scanType) {
     
     initAudio(); 
     
-    const scannerModal = new bootstrap.Modal(document.getElementById('scannerModal'));
+    const scannerModalEl = document.getElementById('scannerModal');
+    let scannerModal = bootstrap.Modal.getInstance(scannerModalEl);
+    if (!scannerModal) {
+        scannerModal = new bootstrap.Modal(scannerModalEl);
+    }
+    
     const modalTitle = document.getElementById('scannerModalLabel');
     const guide = document.getElementById('scanner-guide');
-    const guideText = document.getElementById('scanner-guide-text');
     
     if (state.continuousMode.active) {
         modalTitle.textContent = '連続スキャンモード';
@@ -251,22 +312,37 @@ function startCamera(scanType) {
     const video = document.getElementById('scanner-video');
     const loadingText = document.getElementById('scanner-loading');
     loadingText.classList.remove('d-none');
-    
-    navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-    })
-    .then(stream => {
-        state.videoStream = stream;
-        video.srcObject = stream;
-        video.setAttribute('playsinline', true);
-        video.play();
-        loadingText.classList.add('d-none');
-        startScanLoop(video);
-    })
-    .catch(err => {
-        console.error('Camera access error:', err);
-        loadingText.innerHTML = `<span class="text-danger">カメラの起動に失敗しました。</span>`;
-    });
+    loadingText.innerHTML = `<div class="spinner-border spinner-border-sm text-primary me-2" role="status"></div><span>カメラを起動しています...</span>`;
+
+    // Stop any previously running camera stream
+    stopCamera();
+
+    const cameraConstraints = [
+        { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } },
+        { video: { facingMode: 'environment' } },
+        { video: true }
+    ];
+
+    let streamSuccess = false;
+    for (const constraint of cameraConstraints) {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia(constraint);
+            state.videoStream = stream;
+            video.srcObject = stream;
+            video.setAttribute('playsinline', true);
+            await video.play();
+            loadingText.classList.add('d-none');
+            startScanLoop(video);
+            streamSuccess = true;
+            break;
+        } catch (err) {
+            console.warn('Camera constraint failed, trying fallback:', constraint, err);
+        }
+    }
+
+    if (!streamSuccess) {
+        loadingText.innerHTML = `<span class="text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i> カメラの起動に失敗しました。カメラ権限を確認してください。</span>`;
+    }
 }
 
 function updateGuideText() {
